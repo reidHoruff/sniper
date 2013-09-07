@@ -28,3 +28,15 @@ def template(func):
   return wrapper
 
 
+def sniper(func):
+  def wrapper(*args, **kwargs):
+    res = func(*args, **kwargs)
+    
+    if isinstance(res, BaseSniper):
+      response = SniperResponse([res])
+    else:
+      response = SniperResponse(list(res))
+
+    return response.to_aprop_response()
+
+  return wrapper

@@ -1,6 +1,12 @@
 from django.template.loader import render_to_string
 
-class BaseSniper:
+class SniperObject:
+  unique = False
+
+  def __hash__(self):
+    return self.__class__.__name__
+
+class BaseSniper(SniperObject):
   identity = None
   unique = False
   template_only = False
@@ -8,7 +14,7 @@ class BaseSniper:
 
   def get_args(self):
     if not self.identity:
-      raise Exception("identity not set")
+      raise Exception("identity not set: %s", self)
 
     if not isinstance(self.identity, str):
       raise Exception("identity must be a string")
@@ -25,9 +31,6 @@ class BaseSniper:
       '__index': self.index,
     }
 
-class MetaSniper(BaseSniper):
-  meta = True
-  
 class JSLog(BaseSniper):
   identity = '__bi_js_log'
   def __init__(self, *args):
@@ -101,6 +104,13 @@ class SetCSS(BaseSniper):
       'values': values,
     }
 
+class PushState(BaseSniper):
+  identity = '__bi_push_state'
+  def __init__(self, url):
+    self.kwargs = {
+      'url': url,
+    }
+
 class JSCall(BaseSniper):
   identity = '__bi_js_call'
   def __init__(self, name, *args):
@@ -109,14 +119,18 @@ class JSCall(BaseSniper):
       'args': args,
     }
 
-class SniperTemplateResponse(MetaSniper):
-  identity = '__bi_template_response'
+class MetaSniper(SniperObject):
+  pass
+  
+class Break(MetaSniper):
+  pass
+
+class PageResponse(MetaSniper):
+  pass
+
+class TemplateResponse(PageResponse):
   def __init__(self, template, dictionary={}, context_instance=None, content_type=None):
     self.template = template
     self.dictionary = dictionary
     self.context_instance = context_instance
     self.content_type = content_type
-    self.kwargs = {}
-
-class Break(MetaSniper):
-  identity = '__bi_break'
