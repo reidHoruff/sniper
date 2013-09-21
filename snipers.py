@@ -1,22 +1,48 @@
 from django.template.loader import render_to_string
+from django.template import RequestContext
+import cgi
 
 class SniperObject:
-  unique = False
+  UNIQUE = False
+  BEFORE_ME = []
+  AFTER_ME = []
+
+  def process(self, request):
+    pass
 
   def __hash__(self):
-    return self.__class__.__name__
+    return hash(self.__class__.__name__)
 
 class BaseSniper(SniperObject):
-  identity = None
-  unique = False
+  IDENTITY = None
   template_only = False
   meta = False
 
+  def __init__(self):
+    self.kwargs = {}
+    self.index = 0
+    self.identity = None
+
+  def set_arg(self, key, value):
+    if not isinstance(key, str):
+      raise TypeError("Sniper key must be string")
+
+    self.kwargs[key] = cgi.escape(value).encode('ascii', 'xmlcharrefreplace')
+
+  def __setitem__(self, key, value):
+    self.set_arg(key, value)
+
+  def __getitem__(self, key):
+    return self.kwargs.get(key, None)
+
+  def __delitem__(self, key):
+    del self.kwargs[key]
+
   def get_args(self):
-    if not self.identity:
+    if not self.IDENTITY:
       raise Exception("identity not set: %s", self)
 
-    if not isinstance(self.identity, str):
+    if not isinstance(self.IDENTITY, str):
       raise Exception("identity must be a string")
 
     if not hasattr(self, 'kwargs'):
@@ -26,20 +52,20 @@ class BaseSniper(SniperObject):
       raise Exception("kwargs property must by a dictionary")
 
     return {
-      '__sniper_ident': self.identity,
+      '__sniper_ident': self.IDENTITY,
       '__sniper_kwargs': self.kwargs,
       '__index': self.index,
     }
 
 class JSLog(BaseSniper):
-  identity = '__bi_js_log'
+  IDENTITY = '__bi_js_log'
   def __init__(self, *args):
     self.kwargs = {
       'args': map(str, args),
     }
 
 class InsertText(BaseSniper):
-  identity = '__bi_insert_text'
+  IDENTITY = '__bi_insert_text'
   def __init__(self, ident, text):
     self.kwargs = {
       'text': text,
@@ -47,57 +73,65 @@ class InsertText(BaseSniper):
     }
 
 class AppendText(BaseSniper):
-  identity = '__bi_append_text'
+  IDENTITY = '__bi_append_text'
   def __init__(self, ident, text):
     self.kwargs = {
       'text': text,
       'dom_ident': ident,
     }
 
-class InsertTemplate(BaseSniper):
-  identity = '__bi_insert_text'
-  def __init__(self, ident, template, args={}, context_instance=None):
-    self.kwargs = {
-      'text': render_to_string(template, args, context_instance),
-      'dom_ident': ident,
-    }
+class BaseTemplateSniper(BaseSniper):
+  def __init__(self, ident, template, args={}, context_instance=None, request_context=False):
+    self.ident = ident
+    self.template = template
+    self.args = args
+    self.context_instance = context_instance
+    self.request_context = request_context
+    BaseSniper.__init__(self)
 
-class AppendTemplate(BaseSniper):
-  identity = '__bi_append_text'
-  def __init__(self, ident, template, args={}, context_instance=None):
-    self.kwargs = {
-      'text': render_to_string(template, args, context_instance),
-      'dom_ident': ident,
-    }
+  def process(self, request):
+    if self.request_context:
+      context_instance = RequestContext(request)
+    else:
+      context_instance = self.context_instance
+
+    self['text'] = render_to_string(self.template, self.args, context_instance)
+    self['dom_ident'] = self.ident
+
+class InsertTemplate(BaseTemplateSniper):
+  IDENTITY = '__bi_insert_text'
+
+class AppendTemplate(BaseTemplateSniper):
+  IDENTITY = '__bi_append_text'
 
 class RefreshBrowser(BaseSniper):
-  identity = '__bi_refresh'
+  IDENTITY = '__bi_refresh'
   def __init__(self):
     self.kwargs = {}
 
 class DeleteFromDOM(BaseSniper):
-  identity = '__bi_dom_delete'
+  IDENTITY = '__bi_dom_delete'
   def __init__(self, ident):
     self.kwargs = {
       'dom_ident': ident,
     }
 
 class RedirectBrowser(BaseSniper):
-  identity = '__bi_redirect'
+  IDENTITY = '__bi_redirect'
   def __init__(self, href):
     self.kwargs = {
       'href': href,
     }
 
 class AlertDialog(BaseSniper):
-  identity = '__bi_alert'
+  IDENTITY = '__bi_alert'
   def __init__(self, text):
     self.kwargs = {
       'text': text
     }
 
 class SetCSS(BaseSniper):
-  identity = '__bi_set_css'
+  IDENTITY = '__bi_set_css'
   def __init__(self, selector, values):
     self.kwargs = {
       'selector': selector,
@@ -105,14 +139,14 @@ class SetCSS(BaseSniper):
     }
 
 class PushState(BaseSniper):
-  identity = '__bi_push_state'
+  IDENTITY = '__bi_push_state'
   def __init__(self, url):
     self.kwargs = {
       'url': url,
     }
 
 class JSCall(BaseSniper):
-  identity = '__bi_js_call'
+  IDENTITY = '__bi_js_call'
   def __init__(self, name, *args):
     self.kwargs = {
       'name': name,
@@ -126,11 +160,20 @@ class Break(MetaSniper):
   pass
 
 class PageResponse(MetaSniper):
-  pass
+  UNIQUE=True
 
 class TemplateResponse(PageResponse):
-  def __init__(self, template, dictionary={}, context_instance=None, content_type=None):
+  def __init__(self, template, dictionary={}, context_instance=None, request_context=False, content_type=None):
     self.template = template
     self.dictionary = dictionary
     self.context_instance = context_instance
     self.content_type = content_type
+    self.request_context = request_context
+
+  def process(self, request):
+    if self.request_context:
+      self.context_instance = RequestContext(request)
+
+class AccessDeniedSniper(MetaSniper):
+  def __init__(self, message='access denied'):
+    self.message = message

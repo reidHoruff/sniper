@@ -2,11 +2,12 @@ import json
 from django.http import HttpResponse
 from django.shortcuts import render_to_response
 from exceptions import *
-from snipers import SniperObject, Break, TemplateResponse, MetaSniper
+from snipers import SniperObject, Break, TemplateResponse, MetaSniper, AccessDeniedSniper
 
-class SniperResponse(HttpResponse):
-  def __init__(self, snipers=[]):
+class SniperResponse(object):
+  def __init__(self, request, snipers=[]):
     self.snipers = snipers
+    self.request = request
 
   def __get_actions_list(self):
     all_snipers = []
@@ -17,7 +18,9 @@ class SniperResponse(HttpResponse):
       if isinstance(s, (list, tuple)):
         all_potential_snipers += s
       elif isinstance(s, SniperObject):
+        all_snipers += reversed(s.AFTER_ME)
         all_snipers.append(s)
+        all_snipers += reversed(s.BEFORE_ME)
       elif s is None:
         all_snipers.append(Break())
       else:
@@ -30,10 +33,12 @@ class SniperResponse(HttpResponse):
       if isinstance(s, Break):
         break
 
-      if s.unique:
+      if s.UNIQUE:
         if s in uniques:
           raise Exception("must be unique")
         uniques.add(s)
+
+      s.process(self.request)
 
       if isinstance(s, MetaSniper):
         metas.append(s)
@@ -45,18 +50,37 @@ class SniperResponse(HttpResponse):
 
   def to_aprop_response(self):
     actions, metas = self.__get_actions_list()
-    template = filter(lambda s: isinstance(s, TemplateResponse), metas)
 
+    denials = filter(lambda s: isinstance(s, AccessDeniedSniper), metas)
+    if denials:
+        return self.__to_access_denied_response(denials)
+
+    template = filter(lambda s: isinstance(s, TemplateResponse), metas)
     if template:
       return self.__to_template_response(actions, template[0])
 
     else:
       return self.__to_ajax_response(actions)
 
+  def __to_access_denied_response(self, denials):
+    messages = map(lambda d: d.message, denials)
+    response_object = {
+      '__obj_ident': '__sniper_transport',
+      '__snipers': [],
+      '__success': False,
+      '__message': messages,
+    }
+
+    return HttpResponse(
+      json.dumps(response_object, indent=2),
+      content_type='application/json',
+    )
+
   def __to_ajax_response(self, actions):
     response_object = {
       '__obj_ident': '__sniper_transport',
       '__snipers': actions,
+      '__success': True,
     }
 
     return HttpResponse(
@@ -68,8 +92,10 @@ class SniperResponse(HttpResponse):
     response_object = {
       '__obj_ident': '__sniper_onload',
       '__snipers': actions,
+      '__success': True,
     }
 
+    print response_object
     render_info.dictionary['__sniper_onload'] = json.dumps(response_object) 
     return render_to_response(
       render_info.template,

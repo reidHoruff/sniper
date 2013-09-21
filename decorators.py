@@ -1,42 +1,21 @@
 from sniper import SniperResponse
-from snipers import BaseSniper
+from snipers import BaseSniper, AccessDeniedSniper
 
-def ajax(func):
-  def wrapper(*args, **kwargs):
-    res = func(*args, **kwargs)
-    
-    if isinstance(res, BaseSniper):
-      response = SniperResponse([res])
-    else:
-      response = SniperResponse(list(res))
+def sniper(authenticate=False):
+  def sniper(func):
+    def wrapper(request, *args, **kwargs):
+      if authenticate and not request.user.is_authenticated():
+        res = [AccessDeniedSniper()]
+      else:
+        res = func(request, *args, **kwargs)
+      
+      if isinstance(res, BaseSniper):
+        response = SniperResponse(request, [res])
+      else:
+        response = SniperResponse(request, list(res))
 
-    return response.to_ajax_response()
+      return response.to_aprop_response()
 
-  return wrapper
+    return wrapper
+  return sniper
 
-def template(func):
-  def wrapper(*args, **kwargs):
-    res = func(*args, **kwargs)
-    
-    if isinstance(res, BaseSniper):
-      response = SniperResponse([res])
-    else:
-      response = SniperResponse(list(res))
-
-    return response.to_template_response()
-
-  return wrapper
-
-
-def sniper(func):
-  def wrapper(*args, **kwargs):
-    res = func(*args, **kwargs)
-    
-    if isinstance(res, BaseSniper):
-      response = SniperResponse([res])
-    else:
-      response = SniperResponse(list(res))
-
-    return response.to_aprop_response()
-
-  return wrapper
