@@ -1,38 +1,68 @@
 import json
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render_to_response
 from exceptions import *
-from snipers import SniperObject, Break, TemplateResponse, MetaSniper, AccessDeniedSniper
+from snipers import SniperObject, Break, TemplateResponse, MetaSniper 
+from django.conf import settings
+
+class stack:
+  def __init__(self):
+    self.s = list()
+
+  def push(self, obj):
+    self.s.append(obj)
+
+  def pop(self):
+    o = self.s[-1]
+    del self.s[-1]
+    return o
+
+  def push_all(self, objs):
+    self.s += objs
+
+  def push_all_r(self, objs):
+    self.s += reversed(objs)
+
+  def as_list(self):
+    return self.s
+
+  def empty(self):
+    return not bool(self.s)
 
 class SniperResponse(object):
-  def __init__(self, request, snipers=[]):
+  def __init__(self, request, snipers=iter([]), has_auth=True):
     self.snipers = snipers
     self.request = request
+    self.has_auth = has_auth
 
   def __get_actions_list(self):
-    all_snipers = []
-    all_potential_snipers = self.snipers
-    while all_potential_snipers:
-      s = all_potential_snipers[-1]
-      del all_potential_snipers[-1]
+    working_stack = stack()
+    output_stack = stack()
+
+    while True:
+      if working_stack.empty():
+        try:
+          working_stack.push(self.snipers.next())
+        except StopIteration:
+          break
+      
+      s = working_stack.pop()
+
       if isinstance(s, (list, tuple)):
-        all_potential_snipers += s
+        working_stack.push_all_r(s)
       elif isinstance(s, SniperObject):
-        all_snipers += reversed(s.AFTER_ME)
-        all_snipers.append(s)
-        all_snipers += reversed(s.BEFORE_ME)
+        output_stack.push_all(s.BEFORE_ME)
+        output_stack.push(s)
+        output_stack.push_all(s.AFTER_ME)
       elif s is None:
-        all_snipers.append(Break())
+        break
       else:
         raise TypeError("not an instance of SniperObject")
 
     actions = []
     metas = []
     uniques = set()
-    for i, s in enumerate(reversed(all_snipers)):
-      if isinstance(s, Break):
-        break
-
+    for i, s in enumerate(output_stack.as_list()):
       if s.UNIQUE:
         if s in uniques:
           raise Exception("must be unique")
@@ -48,55 +78,41 @@ class SniperResponse(object):
 
     return actions, metas
 
-  def to_aprop_response(self):
+  def to_ajax_response(self):
     actions, metas = self.__get_actions_list()
 
-    denials = filter(lambda s: isinstance(s, AccessDeniedSniper), metas)
-    if denials:
-        return self.__to_access_denied_response(denials)
-
-    template = filter(lambda s: isinstance(s, TemplateResponse), metas)
-    if template:
-      return self.__to_template_response(actions, template[0])
-
-    else:
-      return self.__to_ajax_response(actions)
-
-  def __to_access_denied_response(self, denials):
-    messages = map(lambda d: d.message, denials)
-    response_object = {
-      '__obj_ident': '__sniper_transport',
-      '__snipers': [],
-      '__success': False,
-      '__message': messages,
-    }
-
-    return HttpResponse(
-      json.dumps(response_object, indent=2),
-      content_type='application/json',
-    )
-
-  def __to_ajax_response(self, actions):
     response_object = {
       '__obj_ident': '__sniper_transport',
       '__snipers': actions,
-      '__success': True,
+      '__success': self.has_auth,
     }
+
+    if not self.has_auth:
+      response_object['__message'] = 'Access Denied'
 
     return HttpResponse(
       json.dumps(response_object, indent=2),
       content_type='application/json',
     )
 
-  def __to_template_response(self, actions, render_info):
+  def to_template_response(self):
+    actions, metas = self.__get_actions_list()
+    
+    templates = filter(lambda s: isinstance(s, TemplateResponse), metas)
+
+    if len(templates) != 1:
+      raise Exception('Sniper Template Response must have exactly one Instance of TemplateResponse')
+
+    render_info = templates[0]
+
     response_object = {
       '__obj_ident': '__sniper_onload',
       '__snipers': actions,
       '__success': True,
     }
 
-    print response_object
     render_info.dictionary['__sniper_onload'] = json.dumps(response_object) 
+
     return render_to_response(
       render_info.template,
       render_info.dictionary,

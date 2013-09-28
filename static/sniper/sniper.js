@@ -3,6 +3,8 @@
 function Sniper() {
   var $this = this;
   var handlers = {};
+  var preHandleCallbacks = [];
+  var postHandleCallbacks = [];
 
   this.construct = function() {
     this.registerHandler(new SniperJSLog());
@@ -56,6 +58,14 @@ function Sniper() {
     handlers[sniper.ident] = sniper;
   }
 
+  this.registerPostHandleCallback = function(callback) {
+    postHandleCallbacks.push(callback);
+  }
+
+  this.registerPreHandleCallback = function(callback) {
+    preHandleCallbacks.push(callback);
+  }
+
   this.request = function(url, data) {
     $.ajax({
       url: url,
@@ -72,17 +82,34 @@ function Sniper() {
       return a.__index - b.__index;
     });
 
+    for (var i in preHandleCallbacks) {
+      preHandleCallbacks[i]();
+    }
+
     for (var index in snipers) {
       var cur_sniper = snipers[index];
       var cur_sniper_kwargs = cur_sniper['__sniper_kwargs'];
       var cur_sniper_ident = cur_sniper['__sniper_ident'];
       var handler = handlers[cur_sniper_ident];
 
+      //unescape all strings
+      for (var key in cur_sniper_kwargs) {
+        if (cur_sniper_kwargs[key].substring) {
+          var str = cur_sniper_kwargs[key]; 
+          var decoded = $("<div />").html(str).text();
+          cur_sniper_kwargs[key] = decoded;
+        }
+      }
+
       if (handler) {
         handler.handle(source, cur_sniper_kwargs);
       } else {
         throw new Error("No handler found for ident: " + cur_sniper_ident);
       }
+    }
+
+    for (var i in postHandleCallbacks) {
+      postHandleCallbacks[i]();
     }
   }
 
@@ -107,8 +134,7 @@ function SniperDeleteFromDOMHandler() {
 function SniperInsertTextHandler() {
   this.ident = '__bi_insert_text'; 
   this.handle = function(source, kwargs) {
-    var decoded = $("<div />").html(kwargs.text).text();
-    $(kwargs.dom_ident).html(decoded);
+    $(kwargs.dom_ident).html(kwargs.text);
   }
 }
 
